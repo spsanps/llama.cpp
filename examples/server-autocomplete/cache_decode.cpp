@@ -97,7 +97,7 @@ int main(int argc, char **argv)
     prompt = read_file("sample.txt");
 
 
-    params.prompt = prompt.c_str();
+    params.prompt = prompt.c_str(); 
 
     std::vector<llama_token> inp;
     inp = ::llama_tokenize(ctx, params.prompt, add_bos, true);
@@ -161,7 +161,7 @@ int main(int argc, char **argv)
     // print time
     fprintf(stderr, "Encoding time: %lld ms\n", enc_duration);
 
-    int n_predict = 128*3;
+    int n_predict = 128;
 
     int n_past = inp.size();
 
@@ -180,7 +180,7 @@ int main(int argc, char **argv)
     fprintf(stderr, "Entering loop\n");
 
 
-    for (int i = 0; i < 128; ++i)
+    for (int i = 0; i < n_predict; ++i)
     {
         /*fprintf(stderr, "i_dft: %d\n", i);
         llama_batch batch_view =
@@ -257,5 +257,93 @@ int main(int argc, char **argv)
 
     auto t_dec_end = ggml_time_us();
 
+    // print
+    fprintf(stderr, "Decoding done\n");
+    fprintf(stderr, "Decoding time: %lld ms\n", (t_dec_end - t_dec_start) / 1000);
+
     llama_print_timings(ctx);
+
+    // lets delete some samples and go back -100 tokens
+    int start_pos = -1;
+    int end_pos = n_input + n_predict - 100;
+    // using sequence 1
+    llama_kv_cache_seq_cp(ctx, 0, 1, start_pos, end_pos);
+    llama_sampling_reset(ctx_sampling);
+    llama_set_rng_seed(ctx, 0);
+    
+    // get token from what we have
+    // replace with actual token that was generated for the next position after -100
+    llama_token id = 0;
+
+    llama_sampling_accept(ctx_sampling, ctx, id, false);
+
+    llama_batch_clear(batch);
+    llama_batch_add(batch, id, n_input + n_predict - 100, {1}, true);
+
+    llama_decode(ctx, batch);
+
+    // accept
+
+    fprintf(stderr, "Decoding again\n");
+
+    // let's decode again
+    for(int i = 0; i < 100; ++i) {
+        llama_token id = 0;
+
+        // sample from the target model
+
+        id = llama_sampling_sample(ctx_sampling, ctx, NULL, 0);
+
+        // print token as is
+        // fprintf(stderr, "Token as is: %d\n", id);
+
+        // print
+        // fprintf(stderr, "Sampling done\n");
+
+        llama_sampling_accept(ctx_sampling, ctx, id, false);
+
+        // print
+        // fprintf(stderr, "Accept done\n");
+
+        // LOG("last: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx_tgt, ctx_sampling->prev).c_str());
+
+        std::string token_str = llama_token_to_piece(ctx, id);
+
+        // if (!params.use_color)
+        // fprintf(stderr, "Token is: |%s|", token_str.c_str());
+        fprintf(stderr, "%s", token_str.c_str());
+
+        // print
+        // fprintf(stderr, "\nToken done\n");
+
+        // create new batch
+        // llama_batch batch_new = llama_batch_get_one(&id, 1, n_input + i, 0);
+        llama_batch_clear(batch);
+        llama_batch_add(batch, id, n_input + n_predict - 100 + i, {0}, true);
+
+        // print
+        // fprintf(stderr, "Batch_new done\n");
+
+        // print batch.logits[batch.n_tokens - 1] for batch_new
+        // batch_new.logits[batch_new.n_tokens - 1] = true;
+        // print
+
+        // evaluate the current batch with the transformer model
+        if (llama_decode(ctx, batch))
+        {
+            fprintf(stderr, "%s : failed to eval, return code %d\n", __func__, 1);
+            return 1;
+        }
+
+        // print
+        // fprintf(stderr, "Decode done\n");
+    }
+    
+
+
+
+    return 0;
+
+    
+
 }
