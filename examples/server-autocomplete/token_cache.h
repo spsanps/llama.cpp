@@ -75,10 +75,10 @@ struct token_cache
     int active_seq_id = -1;
 
     std::vector<llama_token_cell> cache;
-    int max_cache_size = 4096;      // eg. 4096 (2 * max_sequence_length)
-    int max_sequence_length = 2048; // eg. 2048 (max_cache_size / 2)
-    int suggestion_length = 32;     // eg. 32
-    int batch_size = 32;            // eg. 32
+    int max_cache_size = 256;      // eg. 4096 (2 * max_sequence_length)
+    int max_sequence_length = 128; // eg. 2048 (max_cache_size / 2)
+    int suggestion_length = 32;    // eg. 32
+    int batch_size = 32;           // eg. 32
 
     int n_empty;
 
@@ -145,7 +145,7 @@ struct token_cache
         {
             const auto &cell = cache[i];
             std::cout << "Index " << i << ": Token = " << cell.token
-                      << ", Pos = " << cell.pos << ", Seq IDs = {";
+                      << ", Pos = " << cell.pos << ", Piece = " << cell.piece << ", Seq IDs = {";
             for (const auto &id : cell.seq_id)
             {
                 std::cout << id << " ";
@@ -452,35 +452,61 @@ struct token_cache
         std::vector<llama_token> &seq = s_info.seq;
         std::string &new_string = s_info.new_string;
 
+        LOG_VERBOSE("Search String: %s\n", s_info_string.c_str());
+        LOG_VERBOSE("New String: %s\n", new_string.c_str());
         s_info.clear(true); // partial clear
+
+        LOG_INFO("Initializing cache for new sequence\n");
 
         int match = kmpMatchSuffixPrefix(s_info_string, new_string);
 
-        LOG_INFO("Initializing cache for new sequence\n");
+        LOG_VERBOSE("Match: %d\n", match);
 
         if (match <= 0)
         {
             LOG_VERBOSE("Sequence is entirely new\n");
-            s_info_string = new_string;
             seq = llama_tokenize(ctx, new_string.c_str(), false, false);
         }
         else
         {
-            LOG_VERBOSE("Sequence is a continuation\n");
-            // we only need to add new string
-            // which is from match to end
+       // which is from match to end
+            // but tokenizer will tokenize space at the beginning differently
+            // fixing that by adding 'A' at the beginning
+
+            LOG_VERBOSE("new_string[match]: %c\n", new_string[match]);
+
+            if (new_string[match] == ' ')
+            {
+                std::string edited_string = "A" + new_string.substr(match);
+                LOG_VERBOSE("Edited String: %s\n", edited_string.c_str());
+            }
+            else
+            {
+                std::string edited_string = new_string.substr(match);
+            }
 
             // extend the existing sequence
             std::vector<llama_token> new_seq =
                 llama_tokenize(ctx,
-                               new_string.substr(match).c_str(),
+                               edited_string.c_str(),
                                false,
                                false);
 
-            seq.insert(seq.end(), new_seq.begin(), new_seq.end());
+            // remove two tokens from the beginning
+            if (new_string[match] == ' ' && new_seq.size() > 2)
+            {
+                new_seq.erase(new_seq.begin(), new_seq.begin() + 2);
+            }
+            else
+            {
+                return 2;
+            }
 
-            s_info_string = new_string;
+            seq.insert(seq.end(), new_seq.begin(), new_seq.end());
         }
+
+        s_info_string = new_string;
+
         // print the tokens
         LOG_VERBOSE("Tokens: ");
         if (verbose_level > 0)
@@ -707,6 +733,9 @@ struct token_cache
         int pattern_length = pattern.size() - rtrim - ltrim;
         rolling_buffer seq_indices;
         bool match = false;
+
+        int end_ind_of_match = -1;
+
         while (pattern_length > 0)
         {
             seq_indices.reset();
@@ -729,14 +758,7 @@ struct token_cache
                     }
                     match = true;
                     match_seq_id = info.seq_id;
-                    if (rtrim == 0)
-                    {
-                        extend = true;
-                    }
-                    else if (seq_indices.back() == info.end_ind)
-                    {
-                        extend = true;
-                    }
+                    end_ind_of_match = info.end_ind;
                     break;
                 }
             }
@@ -862,6 +884,15 @@ struct token_cache
             extend = false;
             LOG_VERBOSE("Minimum overlap not found\n");
             return 0;
+        }
+
+        if (rtrim == 0)
+        {
+            extend = true;
+        }
+        else if (seq_indices.back() == end_ind_of_match)
+        {
+            extend = true;
         }
 
         // we have the minimum overlap required
@@ -1265,9 +1296,8 @@ struct token_cache
             _decode(batch);
 
             LOG_VERBOSE("Decoded with logits\n");
-
-            return 0;
         }
+        return 0;
     }
 
     int cache_suggest(search_info &s_info,

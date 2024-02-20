@@ -45,7 +45,25 @@ struct search_info
     int suggested_tokens; // how many tokens have been suggested
     std::string suggested_string;
 
-    void clear(bool partial = false);
+    void clear(bool partial = false)
+    {
+        if (!partial)
+        {
+            search_string = "";
+            seq.clear();
+            new_string = "";
+        }
+        new_tokens = 0;
+        match_seq_id = -1;
+        target_seq_id = -1;
+        indices.clear();
+        ltrim = 0;
+        rtrim = 0;
+        extend = false;
+        decoded_tokens = 0;
+        suggested_tokens = 0;
+        suggested_string = "";
+    }
     void print_string() const;
     void print_tokens() const;
     void print_indices() const;

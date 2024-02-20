@@ -126,12 +126,12 @@ struct llama_server_context
         search.clear();
 
         // load the model
-        cache.init(4096);
+        cache.init(256);
         state.store(SERVER_STATE_READY);
         task.set_state(IDLE);
     };
 
-    bool handle_status(const int status, json &response)
+    bool handle_status(const int status)
     {
 
         switch (status)
@@ -139,27 +139,30 @@ struct llama_server_context
         case 0: // SUCCESS
             return true;
         case 1: // CANCELLED
-            response["n_decoded"] = search.decoded_tokens;
-            response["n_suggested"] = search.suggested_tokens;
-            response["suggested"] = search.suggested_string;
+            // response["n_decoded"] = search.decoded_tokens;
+            // response["n_suggested"] = search.suggested_tokens;
+            // response["suggested"] = search.suggested_string;
             return false;
         case 2: // WARNING
-            response["warning"] = "cache failed with warning";
+            // response["warning"] = "cache failed with warning";
             search.clear();
             task.set_state(IDLE);
             return false;
         case 3: // ERROR
-            response["error"] = "cache error";
+            // response["error"] = "cache error";
             search.clear();
             cache.clear();
             task.set_state(IDLE);
             return false;
         }
+        return false;
     }
 
     void complete(std::string prompt, json &response)
     {
-
+        // LOG_INFO("Request received\n");
+        LOG_VERBOSE("Prompt: %s\n", prompt.c_str());
+        LOG_VERBOSE("Search String: %s\n", search.search_string.c_str());
         if (prompt == search.search_string)
         {
             // same prompt, no need to update
@@ -175,7 +178,7 @@ struct llama_server_context
             response["suggested"] = "";
         }
 
-        task.accept_if_cancel(); // if cancel request is pending, accept it
+        // task.accept_if_cancel(); // if cancel request is pending, accept it
         task.request_cancel();   // WAIT FOR all threads to finish if not in IDLE state
         // search.clear();
         search.new_string = prompt;
@@ -892,74 +895,84 @@ int32_t main(int32_t argc, char **argv)
     // GG: if I put the main loop inside a thread, it crashes on the first request when build in Debug!?
     //     "Bus error: 10" - this is on macOS, it does not crash on Linux
     // std::thread t2([&]()
+    token_cache &cache = llama.cache;
+    search_info &search = llama.search;
+    task_management &task = llama.task;
+
     {
         bool running = true;
-/*         while (running)
+        int status;
+
+        while (running)
         {
-            int status = llama.cache.cache_init(llama.search);
 
-        if (!handle_status(status, response))
-            return;
-        if (task.accept_if_cancel())
-            return;
+            LOG_INFO("Waiting for request\n");
 
-        // CACHE_COMPARE
-        if (!task.set_state(CACHE_COMPARE))
-            return;
+            task.wait_for_state(CACHE_INIT);
 
-        status = cache.cache_compare(search, s_params);
+            LOG_INFO("Request received\n");
 
-        if (!handle_status(status, response))
-            return;
-        if (task.accept_if_cancel())
-            return;
+            status = cache.cache_init(search);
 
-        // CACHE_PREPARE
-        if (!task.set_state(CACHE_PREPARE))
-            return;
+            LOG_INFO("CACHE_INIT status: %d\n", status);
+            // log search.search_string
+            LOG_VERBOSE("Search String: %s\n", search.search_string.c_str());
 
-        status = cache.cache_prepare(search);
+            if (!llama.handle_status(status))
+                continue;
+            if (task.accept_if_cancel())
+                continue;
 
-        if (!handle_status(status, response))
-            return;
-        if (task.accept_if_cancel())
-            return;
+            // CACHE_COMPARE
+            if (!task.set_state(CACHE_COMPARE))
+                continue;
 
-        // CACHE_UPDATE
-        if (!task.set_state(CACHE_UPDATE))
-            return;
+            status = cache.cache_compare(search, llama.s_params);
 
-        status = cache.cache_update(search, task);
+            if (!llama.handle_status(status))
+                continue;
+            if (task.accept_if_cancel())
+                continue;
 
-        if (!handle_status(status, response))
-            return;
-        if (task.accept_if_cancel())
-            return;
+            // CACHE_PREPARE
+            if (!task.set_state(CACHE_PREPARE))
+                continue;
 
-        // CACHE_SUGGEST
-        if (!task.set_state(CACHE_SUGGEST))
-            return;
+            status = cache.cache_prepare(search);
 
-        status = cache.cache_suggest(search, task);
+            if (!llama.handle_status(status))
+                continue;
+            if (task.accept_if_cancel())
+                continue;
 
-        if (!handle_status(status, response))
-            return;
+            // CACHE_UPDATE
+            if (!task.set_state(CACHE_UPDATE))
+                continue;
 
-        response["n_decoded"] = search.decoded_tokens;
-        response["n_suggested"] = search.suggested_tokens;
-        response["suggested"] = search.suggested_string;
+            status = cache.cache_update(search, task);
 
-        if (task.accept_if_cancel())
-            return;
+            if (!llama.handle_status(status))
+                continue;
+            if (task.accept_if_cancel())
+                continue;
 
-        task.set_state(IDLE);
+            // CACHE_SUGGEST
+            if (!task.set_state(CACHE_SUGGEST))
+                continue;
 
-        LOG_INFO("Request completed\n");
+            status = cache.cache_suggest(search, task);
 
-        cache.print_cache();
+            if (!llama.handle_status(status))
+                continue;
 
-        return; 
-        } */
+            // if (task.accept_if_cancel())
+            //    continue;
+
+            task.set_state(IDLE);
+
+            LOG_INFO("Processing completed\n");
+            cache.print_cache();
+        }
     }
     //);
 

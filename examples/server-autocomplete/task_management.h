@@ -94,6 +94,8 @@ struct task_management
             return false;
         }
         state.store(new_state);
+        // notify the waiting thread
+        state_changed.notify_all();
         return true;
     }
 
