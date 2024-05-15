@@ -99,6 +99,11 @@ struct task_management
         return true;
     }
 
+    int get_state()
+    {
+        return state.load();
+    }
+
     bool accept_if_cancel()
     {
         LOG_VERBOSE("Checking cancel request\n");

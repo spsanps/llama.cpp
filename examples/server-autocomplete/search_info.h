@@ -26,14 +26,15 @@ struct search_info
 {
     // let's have a string to store the original search string
     std::string search_string;
-    std::string new_string;
+    std::string new_string; // server will interact with this string
+    // separating the string as we are multi-threaded and we don't want to mess up the original string
 
-    std::vector<llama_token> seq; // cleaned, truncated, tokenized search string
+    std::vector<llama_token> tokenized_string; // cleaned, truncated, tokenized search string
 
     llama_seq_id match_seq_id;  // matching sequence id
     llama_seq_id target_seq_id; // new sequence id
 
-    std::deque<int> indices; // indices of the matching tokens in the cache
+    std::deque<int> match_indices; // indices of the matching tokens in the cache
 
     int new_tokens; // new tokens - determined after searching in cache
 
@@ -50,15 +51,16 @@ struct search_info
         if (!partial)
         {
             search_string = "";
-            seq.clear();
+            tokenized_string.clear();
             new_string = "";
         }
         new_tokens = 0;
         match_seq_id = -1;
         target_seq_id = -1;
-        indices.clear();
+        match_indices.clear();
         ltrim = 0;
         rtrim = 0;
+
         extend = false;
         decoded_tokens = 0;
         suggested_tokens = 0;

@@ -67,7 +67,7 @@ static void log_server_request(const httplib::Request &req, const httplib::Respo
 
 struct llama_server_context
 {
-    /* unlike server.cpp we don't have slots as we won't process more than one suggestion in parallel */
+    /* unlike server.cpp we don't have slots as we won't process suggestions in parallel */
 
     // clip_ctx *clp_ctx = nullptr;
 
@@ -126,7 +126,7 @@ struct llama_server_context
         search.clear();
 
         // load the model
-        cache.init(256);
+        cache.init();
         state.store(SERVER_STATE_READY);
         task.set_state(IDLE);
     };
@@ -161,14 +161,24 @@ struct llama_server_context
     void complete(std::string prompt, json &response)
     {
         // LOG_INFO("Request received\n");
-        LOG_VERBOSE("Prompt: %s\n", prompt.c_str());
-        LOG_VERBOSE("Search String: %s\n", search.search_string.c_str());
-        if (prompt == search.search_string)
+        LOG_VERBOSE("Prompt: %s", prompt.c_str());
+        LOG_VERBOSE("New String: %s", search.new_string.c_str());
+        // convert prompt to same length as cache.max_string_length
+        // if prompt is longer, truncate it from the left
+        if (prompt.length() > cache.max_string_length)
+        {
+            prompt = prompt.substr(prompt.length() - cache.max_string_length);
+        }
+        if (prompt == search.new_string)
         {
             // same prompt, no need to update
             response["n_decoded"] = search.decoded_tokens;
             response["n_suggested"] = search.suggested_tokens;
             response["suggested"] = search.suggested_string;
+            response["max_decoded"] = cache.max_sequence_length;
+            response["max_suggested"] = cache.suggestion_length;
+            response["state"] = task.get_state();
+
             return;
         }
         else
@@ -176,80 +186,31 @@ struct llama_server_context
             response["n_decoded"] = 0;
             response["n_suggested"] = 0;
             response["suggested"] = "";
+            response["max_decoded"] = cache.max_sequence_length;
+            response["max_suggested"] = cache.suggestion_length;
+            response["state"] = task.get_state();
+        
         }
 
         // task.accept_if_cancel(); // if cancel request is pending, accept it
-        task.request_cancel();   // WAIT FOR all threads to finish if not in IDLE state
+        task.request_cancel(); // WAIT FOR all threads to finish if not in IDLE state
         // search.clear();
         search.new_string = prompt;
 
         // CACHE_INIT
         task.set_state(CACHE_INIT);
         return;
+    }
 
-        /* int status = cache.cache_init(search);
+    void suggest(json &response)
+    {
 
-        if (!handle_status(status, response))
-            return;
-        if (task.accept_if_cancel())
-            return;
-
-        // CACHE_COMPARE
-        if (!task.set_state(CACHE_COMPARE))
-            return;
-
-        status = cache.cache_compare(search, s_params);
-
-        if (!handle_status(status, response))
-            return;
-        if (task.accept_if_cancel())
-            return;
-
-        // CACHE_PREPARE
-        if (!task.set_state(CACHE_PREPARE))
-            return;
-
-        status = cache.cache_prepare(search);
-
-        if (!handle_status(status, response))
-            return;
-        if (task.accept_if_cancel())
-            return;
-
-        // CACHE_UPDATE
-        if (!task.set_state(CACHE_UPDATE))
-            return;
-
-        status = cache.cache_update(search, task);
-
-        if (!handle_status(status, response))
-            return;
-        if (task.accept_if_cancel())
-            return;
-
-        // CACHE_SUGGEST
-        if (!task.set_state(CACHE_SUGGEST))
-            return;
-
-        status = cache.cache_suggest(search, task);
-
-        if (!handle_status(status, response))
-            return;
-
+        // just return the response
         response["n_decoded"] = search.decoded_tokens;
         response["n_suggested"] = search.suggested_tokens;
         response["suggested"] = search.suggested_string;
 
-        if (task.accept_if_cancel())
-            return;
-
-        task.set_state(IDLE);
-
-        LOG_INFO("Request completed\n");
-
-        cache.print_cache();
-
-        return; */
+        return;
     }
 };
 
